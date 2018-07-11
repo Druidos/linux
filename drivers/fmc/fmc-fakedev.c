@@ -244,7 +244,10 @@ static struct fmc_operations ff_fmc_operations = {
 /* This device is kmalloced: release it */
 static void ff_dev_release(struct device *dev)
 {
+	int i;
 	struct ff_dev *ff = container_of(dev, struct ff_dev, dev);
+	for (i = 0; i < ff_nr_dev; i++)
+		kfree(ff->fmc[i]);
 	kfree(ff);
 }
 
@@ -273,15 +276,17 @@ static struct ff_dev *ff_dev_create(void)
 	ff->dev.release = ff_dev_release;
 
 	ret = device_register(&ff->dev);
-	if (ret < 0) {
-		put_device(&ff->dev);
-		return ERR_PTR(ret);
-	}
+	if (ret < 0)
+		goto err;
 
 	/* Create fmc structures that refer to this new "hw" device */
 	for (i = 0; i < ff_nr_dev; i++) {
 		fmc = kmemdup(&ff_template_fmc, sizeof(ff_template_fmc),
 			      GFP_KERNEL);
+		if (!fmc) {
+			ret = -ENOMEM;
+			goto err;
+		}
 		fmc->hwdev = &ff->dev;
 		fmc->carrier_data = ff;
 		fmc->nr_slots = ff_nr_dev;
@@ -294,6 +299,10 @@ static struct ff_dev *ff_dev_create(void)
 		ff_template_fmc.device_id++;
 	}
 	return ff;
+
+err:
+	put_device(&ff->dev);
+	return ERR_PTR(ret);
 }
 
 /* init and exit */
