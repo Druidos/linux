@@ -806,6 +806,7 @@ static int sm501_register_usbhost(struct sm501_devdata *sm,
 				  resource_size_t *mem_avail)
 {
 	struct platform_device *pdev;
+	int ret;
 
 	pdev = sm501_create_subdev(sm, "sm501-usb", 3, 0);
 	if (!pdev)
@@ -815,7 +816,10 @@ static int sm501_register_usbhost(struct sm501_devdata *sm,
 	sm501_create_mem(sm, &pdev->resource[1], mem_avail, 256*1024);
 	sm501_create_irq(sm, &pdev->resource[2]);
 
-	return sm501_register_device(sm, pdev);
+	ret = sm501_register_device(sm, pdev);
+	if (ret < 0)
+		sm501_device_release(&pdev->dev);
+	return ret;
 }
 
 static void sm501_setup_uart_data(struct sm501_devdata *sm,
@@ -835,6 +839,7 @@ static int sm501_register_uart(struct sm501_devdata *sm, int devices)
 {
 	struct platform_device *pdev;
 	struct plat_serial8250_port *uart_data;
+	int ret;
 
 	pdev = sm501_create_subdev(sm, "serial8250", 0,
 				   sizeof(struct plat_serial8250_port) * 3);
@@ -858,13 +863,17 @@ static int sm501_register_uart(struct sm501_devdata *sm, int devices)
 
 	pdev->id = PLAT8250_DEV_SM501;
 
-	return sm501_register_device(sm, pdev);
+	ret = sm501_register_device(sm, pdev);
+	if (ret < 0)
+		sm501_device_release(&pdev->dev);
+	return ret;
 }
 
 static int sm501_register_display(struct sm501_devdata *sm,
 				  resource_size_t *mem_avail)
 {
 	struct platform_device *pdev;
+	int ret;
 
 	pdev = sm501_create_subdev(sm, "sm501-fb", 4, 0);
 	if (!pdev)
@@ -875,7 +884,10 @@ static int sm501_register_display(struct sm501_devdata *sm,
 	sm501_create_mem(sm, &pdev->resource[2], mem_avail, *mem_avail);
 	sm501_create_irq(sm, &pdev->resource[3]);
 
-	return sm501_register_device(sm, pdev);
+	ret = sm501_register_device(sm, pdev);
+	if (ret < 0)
+		sm501_device_release(&pdev->dev);
+	return ret;
 }
 
 #ifdef CONFIG_MFD_SM501_GPIO
@@ -1134,6 +1146,7 @@ static int sm501_register_gpio_i2c_instance(struct sm501_devdata *sm,
 	struct i2c_gpio_platform_data *icd;
 	struct platform_device *pdev;
 	struct gpiod_lookup_table *lookup;
+	int ret;
 
 	pdev = sm501_create_subdev(sm, "i2c-gpio", 0,
 				   sizeof(struct i2c_gpio_platform_data));
@@ -1179,7 +1192,10 @@ static int sm501_register_gpio_i2c_instance(struct sm501_devdata *sm,
 		 iic->bus_num,
 		 iic->pin_sda, iic->pin_scl);
 
-	return sm501_register_device(sm, pdev);
+	ret = sm501_register_device(sm, pdev);
+	if (ret < 0)
+		sm501_device_release(&pdev->dev);
+	return ret;
 }
 
 static int sm501_register_gpio_i2c(struct sm501_devdata *sm,
@@ -1297,6 +1313,14 @@ static unsigned int sm501_mem_local[] = {
 	[5]	= 2*1024*1024,
 };
 
+
+static void sm501_remove_sub(struct sm501_devdata *sm,
+			     struct sm501_device *smdev)
+{
+	list_del(&smdev->list);
+	platform_device_unregister(&smdev->pdev);
+}
+
 /* sm501_init_dev
  *
  * Common init code for an SM501
@@ -1306,6 +1330,7 @@ static int sm501_init_dev(struct sm501_devdata *sm)
 {
 	struct sm501_initdata *idata;
 	struct sm501_platdata *pdata;
+	struct sm501_device *smdev, *tmp;
 	resource_size_t mem_avail;
 	unsigned long dramctrl;
 	unsigned long devid;
@@ -1350,32 +1375,60 @@ static int sm501_init_dev(struct sm501_devdata *sm)
 	if (idata) {
 		sm501_init_regs(sm, idata);
 
-		if (idata->devices & SM501_USE_USB_HOST)
-			sm501_register_usbhost(sm, &mem_avail);
-		if (idata->devices & (SM501_USE_UART0 | SM501_USE_UART1))
-			sm501_register_uart(sm, idata->devices);
-		if (idata->devices & SM501_USE_GPIO)
-			sm501_register_gpio(sm);
+		if (idata->devices & SM501_USE_USB_HOST) {
+			ret = sm501_register_usbhost(sm, &mem_avail);
+			if (ret)
+				goto device_file_remove;
+		}
+		if (idata->devices & (SM501_USE_UART0 | SM501_USE_UART1)) {
+			ret = sm501_register_uart(sm, idata->devices);
+			if (ret)
+				goto sub_device_release;
+		}
+		if (idata->devices & SM501_USE_GPIO) {
+			ret = sm501_register_gpio(sm);
+			if (ret)
+				goto sub_device_release;
+		}
 	}
 
 	if (pdata && pdata->gpio_i2c && pdata->gpio_i2c_nr > 0) {
 		if (!sm501_gpio_isregistered(sm))
 			dev_err(sm->dev, "no gpio available for i2c gpio.\n");
-		else
-			sm501_register_gpio_i2c(sm, pdata);
+		else {
+			ret = sm501_register_gpio_i2c(sm, pdata);
+			if (ret) {
+				dev_err(sm->dev, "cannot register gpio i2c.\n");
+				goto gpio_remove;
+			}
+		}
 	}
 
 	ret = sm501_check_clocks(sm);
 	if (ret) {
 		dev_err(sm->dev, "M1X and M clocks sourced from different "
 					"PLLs\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto gpio_remove;
 	}
 
 	/* always create a framebuffer */
-	sm501_register_display(sm, &mem_avail);
+	ret = sm501_register_display(sm, &mem_avail);
+	if (ret)
+		goto gpio_remove;
 
 	return 0;
+
+gpio_remove:
+	sm501_gpio_remove(sm);
+sub_device_release:
+	list_for_each_entry_safe(smdev, tmp, &sm->devices, list)
+		sm501_remove_sub(sm, smdev);
+device_file_remove:
+	device_remove_file(sm->dev, &dev_attr_dbg_regs);
+
+	return ret;
+
 }
 
 static int sm501_plat_probe(struct platform_device *dev)
@@ -1425,8 +1478,15 @@ static int sm501_plat_probe(struct platform_device *dev)
 		goto err_claim;
 	}
 
-	return sm501_init_dev(sm);
+	ret = sm501_init_dev(sm);
+	if (ret) {
+		dev_err(&dev->dev, "cannot init device\n");
+		goto err_ioremap;
+	}
+	return 0;
 
+ err_ioremap:
+	iounmap(sm->regs);
  err_claim:
 	release_resource(sm->regs_claim);
 	kfree(sm->regs_claim);
@@ -1634,25 +1694,24 @@ static int sm501_pci_probe(struct pci_dev *dev,
 		goto err4;
 	}
 
-	sm501_init_dev(sm);
+	err = sm501_init_dev(sm);
+	if (err) {
+		dev_err(&dev->dev, "cannot init device\n");
+		goto err5;
+	}
 	return 0;
 
- err4:
+err5:
+	iounmap(sm->regs);
+err4:
 	release_resource(sm->regs_claim);
 	kfree(sm->regs_claim);
- err3:
+err3:
 	pci_disable_device(dev);
- err2:
+err2:
 	kfree(sm);
- err1:
+err1:
 	return err;
-}
-
-static void sm501_remove_sub(struct sm501_devdata *sm,
-			     struct sm501_device *smdev)
-{
-	list_del(&smdev->list);
-	platform_device_unregister(&smdev->pdev);
 }
 
 static void sm501_dev_remove(struct sm501_devdata *sm)
