@@ -400,7 +400,7 @@ static inline int crypto_requires_sync(u32 type, u32 mask)
 	return crypto_requires_off(type, mask, CRYPTO_ALG_ASYNC);
 }
 
-noinline unsigned long __crypto_memneq(const void *a, const void *b, size_t size);
+unsigned long __crypto_memneq(const void *a, const void *b, size_t size);
 
 /**
  * crypto_memneq - Compare two areas of memory without leaking
