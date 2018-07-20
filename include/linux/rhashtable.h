@@ -617,7 +617,7 @@ static inline struct rhash_head *__rhashtable_lookup(
 	struct rhashtable *ht, const void *key,
 	const struct rhashtable_params params)
 {
-	struct rhashtable_compare_arg arg = {
+/*	struct rhashtable_compare_arg arg = {
 		.ht = ht,
 		.key = key,
 	};
@@ -635,14 +635,14 @@ restart:
 			continue;
 		return he;
 	}
-
+*/
 	/* Ensure we see any new tables. */
-	smp_rmb();
+/*	smp_rmb();
 
 	tbl = rht_dereference_rcu(tbl->future_tbl, ht);
 	if (unlikely(tbl))
 		goto restart;
-
+*/
 	return NULL;
 }
 
