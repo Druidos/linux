@@ -202,7 +202,10 @@ static int platram_probe(struct platform_device *pdev)
 		}
 	}
 
-	return err;
+	if (err)
+		goto exit_free;
+
+	return 0;
 
  exit_free:
 	platram_remove(pdev);
