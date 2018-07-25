@@ -1752,7 +1752,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 	u16 port_speed;
 	u8 port_id;
 
-	port = kzalloc(sizeof(*port), GFP_KERNEL);
+	port = devm_kzalloc(&of_dev->dev, sizeof(*port), GFP_KERNEL);
 	if (!port)
 		return -ENOMEM;
 
@@ -1765,14 +1765,14 @@ static int fman_port_probe(struct platform_device *of_dev)
 	if (!fm_node) {
 		dev_err(port->dev, "%s: of_get_parent() failed\n", __func__);
 		err = -ENODEV;
-		goto return_err;
+		goto node_put_err;
 	}
 
 	fman = dev_get_drvdata(&of_find_device_by_node(fm_node)->dev);
 	of_node_put(fm_node);
 	if (!fman) {
 		err = -EINVAL;
-		goto return_err;
+		goto node_put_err;
 	}
 
 	err = of_property_read_u32(port_node, "cell-index", &val);
@@ -1780,7 +1780,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 		dev_err(port->dev, "%s: reading cell-index for %pOF failed\n",
 			__func__, port_node);
 		err = -EINVAL;
-		goto return_err;
+		goto node_put_err;
 	}
 	port_id = (u8)val;
 	port->dts_params.id = port_id;
@@ -1828,7 +1828,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 			dev_err(port->dev, "%s: incorrect qman-channel-id\n",
 				__func__);
 			err = -EINVAL;
-			goto return_err;
+			goto node_put_err;
 		}
 		port->dts_params.qman_channel_id = qman_channel_id;
 	}
@@ -1838,7 +1838,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 		dev_err(port->dev, "%s: of_address_to_resource() failed\n",
 			__func__);
 		err = -ENOMEM;
-		goto return_err;
+		goto node_put_err;
 	}
 
 	port->dts_params.fman = fman;
@@ -1851,7 +1851,7 @@ static int fman_port_probe(struct platform_device *of_dev)
 		dev_err(port->dev, "%s: __devm_request_region() failed\n",
 			__func__);
 		err = -EINVAL;
-		goto free_port;
+		goto return_err;
 	}
 
 	port->dts_params.base_addr = devm_ioremap(port->dev, res.start,
@@ -1863,10 +1863,9 @@ static int fman_port_probe(struct platform_device *of_dev)
 
 	return 0;
 
-return_err:
+node_put_err:
 	of_node_put(port_node);
-free_port:
-	kfree(port);
+return_err:
 	return err;
 }
 
